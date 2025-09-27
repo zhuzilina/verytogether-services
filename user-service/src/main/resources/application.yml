@@ -58,6 +58,10 @@ admin:
   fullName: System Administrator
   role: SUPER_ADMIN
 
+# Profile Service 配置
+profile-service:
+  url: http://localhost:8084
+
 # 日志配置
 logging:
   level:

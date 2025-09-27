@@ -44,7 +44,15 @@ public class UserValidationService {
             Map<String, Object> response = restTemplate.postForObject(validationUrl, request, Map.class);
 
             if (response != null && response.containsKey("valid")) {
-                return Boolean.TRUE.equals(response.get("valid"));
+                // 如果直接验证通过，返回true
+                if (Boolean.TRUE.equals(response.get("valid"))) {
+                    return true;
+                }
+
+                // 如果直接验证不通过，检查是否为超级管理员
+                if (response.containsKey("role") && "SUPER_ADMIN".equals(response.get("role"))) {
+                    return true;
+                }
             }
 
             return false;

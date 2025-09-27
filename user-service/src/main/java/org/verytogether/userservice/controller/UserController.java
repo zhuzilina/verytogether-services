@@ -3,11 +3,12 @@ package org.verytogether.userservice.controller;
 import org.verytogether.userservice.model.User;
 import org.verytogether.userservice.model.UserRole;
 import org.verytogether.userservice.service.UserService;
+import org.verytogether.userservice.security.JwtTokenProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.client.RestTemplate;
 
 import jakarta.servlet.http.HttpServletRequest;
 
@@ -33,6 +34,15 @@ public class UserController {
 
     @Value("${admin.username:admin}")
     private String adminUsername;
+
+    @Autowired
+    private RestTemplate restTemplate;
+
+    @Autowired
+    private JwtTokenProvider jwtTokenProvider;
+
+    @Value("${profile-service.url:http://localhost:8084}")
+    private String profileServiceUrl;
 
     @Autowired
     public UserController(UserService userService) {
@@ -118,10 +128,26 @@ public class UserController {
                     .body(Map.of("error", "超级管理员用户不能被删除"));
         }
 
-        if (userService.deleteUser(id)) {
-            return ResponseEntity.noContent().build();
-        } else {
-            return ResponseEntity.notFound().build();
+        try {
+            // 首先删除用户档案
+            deleteProfileFromProfileService(id);
+
+            // 然后删除用户
+            if (userService.deleteUser(id)) {
+                return ResponseEntity.noContent().build();
+            } else {
+                return ResponseEntity.notFound().build();
+            }
+        } catch (Exception e) {
+            // 如果档案删除失败，记录错误但不影响用户删除
+            System.err.println("Failed to delete user profile for user ID " + id + ": " + e.getMessage());
+
+            // 继续删除用户
+            if (userService.deleteUser(id)) {
+                return ResponseEntity.noContent().build();
+            } else {
+                return ResponseEntity.notFound().build();
+            }
         }
     }
 
@@ -175,6 +201,56 @@ public class UserController {
      */
     private String getAdminUsername() {
         return adminUsername;
+    }
+
+    /**
+     * 从 profile-service 删除用户档案
+     */
+    private void deleteProfileFromProfileService(Long userId) {
+        try {
+            String profileServiceDeleteUrl = profileServiceUrl + "/api/profiles/" + userId;
+
+            // 创建管理员token用于内部服务间通信
+            String adminToken = createInternalAdminToken();
+
+            // 设置请求头
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("Authorization", "Bearer " + adminToken);
+            headers.setContentType(MediaType.APPLICATION_JSON);
+
+            HttpEntity<String> requestEntity = new HttpEntity<>(headers);
+
+            // 发送删除请求
+            ResponseEntity<String> response = restTemplate.exchange(
+                profileServiceDeleteUrl,
+                HttpMethod.DELETE,
+                requestEntity,
+                String.class
+            );
+
+            if (response.getStatusCode().is2xxSuccessful()) {
+                System.out.println("Successfully deleted profile for user ID: " + userId);
+            } else {
+                // 如果返回404（档案不存在），认为是正常的
+                if (response.getStatusCode() == HttpStatus.NOT_FOUND) {
+                    System.out.println("Profile not found for user ID: " + userId + ", skipping deletion");
+                } else {
+                    throw new RuntimeException("Profile service returned status: " + response.getStatusCode());
+                }
+            }
+
+        } catch (Exception e) {
+            // 如果档案删除失败，抛出异常让调用者处理
+            throw new RuntimeException("Failed to delete user profile: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 创建内部管理员token用于服务间通信
+     */
+    private String createInternalAdminToken() {
+        // 创建一个短期的内部服务token
+        return jwtTokenProvider.generateToken("internal-admin-service");
     }
 
     /**

@@ -4,6 +4,7 @@ import com.example.profileservice.entity.Profile;
 import com.example.profileservice.service.ProfileService;
 import com.example.profileservice.service.UserValidationService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -30,12 +31,22 @@ public class ProfileController {
     @Autowired
     private UserValidationService userValidationService;
 
+    @Value("${internal.service.secret:internal-service-secret}")
+    private String internalServiceSecret;
+
     private String extractTokenFromRequest(HttpServletRequest request) {
         String bearerToken = request.getHeader("Authorization");
         if (bearerToken != null && bearerToken.startsWith("Bearer ")) {
             return bearerToken.substring(7);
         }
         return null;
+    }
+
+    /**
+     * 验证是否为内部服务调用
+     */
+    private boolean isInternalServiceCall(String token) {
+        return token != null && token.contains("internal-admin-service");
     }
 
     @PostMapping
@@ -87,7 +98,8 @@ public class ProfileController {
     public ResponseEntity<?> deleteProfile(@PathVariable Long userId, HttpServletRequest httpRequest) {
         String token = extractTokenFromRequest(httpRequest);
 
-        if (token == null || !userValidationService.validateUserAccess(token, userId)) {
+        // 如果是内部服务调用，允许删除
+        if (token == null || (!isInternalServiceCall(token) && !userValidationService.validateUserAccess(token, userId))) {
             return ResponseEntity.status(401).body(Map.of("error", "未授权访问"));
         }
 
